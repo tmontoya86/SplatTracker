@@ -6,10 +6,10 @@ import { Users, Calendar, DollarSign, Plus, Trash2, Save, Target, Shield, CheckC
 // 2. Create a new project
 // 3. Go to Project Settings -> API
 // 4. Copy the URL and the "anon" / "public" Key
-const supabaseUrl = "PASTE_YOUR_SUPABASE_URL_HERE";
-const supabaseKey = "PASTE_YOUR_SUPABASE_ANON_KEY_HERE";
+const supabaseUrl = "https://dpdhgtngzmynyergynhu.supabase.co";
+const supabaseKey = "sb_secret_fixHvTF4rLFaS5ngctVTNw_F8nbJ1i6";
 
-const isConfigured = supabaseUrl !== "PASTE_YOUR_SUPABASE_URL_HERE";
+const isConfigured = supabaseUrl !== "https://dpdhgtngzmynyergynhu.supabase.co";
 
 export default function PaintballFinanceTracker() {
   // --- State Management ---
