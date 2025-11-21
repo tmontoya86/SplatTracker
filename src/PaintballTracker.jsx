@@ -2,21 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { Users, Calendar, DollarSign, Plus, Trash2, Save, Target, Shield, CheckCircle, ShoppingBag, ListPlus, X, LogOut, Lock } from 'lucide-react';
 
 // --- CONFIGURATION ---
-// 1. Go to https://supabase.com/dashboard
-// 2. Create a new project
-// 3. Go to Project Settings -> API
-// 4. Copy the URL and the "anon" / "public" Key
-const supabaseUrl = "https://dpdhgtngzmynyergynhu.supabase.co";
-const supabaseKey = "sb_secret_fixHvTF4rLFaS5ngctVTNw_F8nbJ1i6";
+// Note: In Vite (which Netlify uses), keys MUST start with "VITE_"
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-const isConfigured = supabaseUrl !== "https://dpdhgtngzmynyergynhu.supabase.co";
+const isConfigured = supabaseUrl && supabaseKey && supabaseUrl !== "PASTE_YOUR_SUPABASE_URL_HERE";
 
 export default function PaintballFinanceTracker() {
-  // --- State Management ---
-  // Supabase Client State (Initialized dynamically to avoid bundler errors)
   const [supabase, setSupabase] = useState(null);
   const [isSupabaseLibraryLoaded, setIsSupabaseLibraryLoaded] = useState(false);
-
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -26,13 +20,13 @@ export default function PaintballFinanceTracker() {
   const [events, setEvents] = useState([]);
   const [gearOrders, setGearOrders] = useState([]);
 
-  // --- Auth Forms State ---
+  // Auth States
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoginView, setIsLoginView] = useState(true);
   const [authError, setAuthError] = useState('');
 
-  // --- Form States ---
+  // Form States
   const [newPlayerName, setNewPlayerName] = useState('');
   const [newEvent, setNewEvent] = useState({ type: 'Practice', date: '', cost: '', attendees: [] });
   const [newOrderMeta, setNewOrderMeta] = useState({ description: '', date: '' });
@@ -41,12 +35,10 @@ export default function PaintballFinanceTracker() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [selectedPlayerForPayment, setSelectedPlayerForPayment] = useState(null);
 
-  // --- 1. DYNAMIC SCRIPT LOADING ---
-  // We load Supabase via script tag to avoid "Dynamic Require" errors in the preview environment
+  // 1. DYNAMIC SCRIPT LOADING
   useEffect(() => {
     if (!isConfigured) return;
 
-    // If already loaded (e.g. hot reload), init immediately
     if (window.supabase && window.supabase.createClient) {
       setSupabase(window.supabase.createClient(supabaseUrl, supabaseKey));
       setIsSupabaseLibraryLoaded(true);
@@ -64,18 +56,16 @@ export default function PaintballFinanceTracker() {
     document.head.appendChild(script);
   }, []);
 
-  // --- 2. INITIALIZATION ---
+  // 2. INITIALIZATION
   useEffect(() => {
     if (!supabase) return;
 
-    // Check active session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
       if (session) fetchAllData();
     });
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) fetchAllData();
@@ -84,24 +74,21 @@ export default function PaintballFinanceTracker() {
     return () => subscription.unsubscribe();
   }, [supabase]);
 
-  // --- DATA FETCHING ---
+  // DATA FETCHING
   const fetchAllData = async () => {
     if (!supabase) return;
     
-    // Fetch Players
     const { data: playersData } = await supabase.from('players').select('*').order('name');
     if (playersData) setPlayers(playersData);
 
-    // Fetch Events
     const { data: eventsData } = await supabase.from('events').select('*').order('date', { ascending: false });
     if (eventsData) setEvents(eventsData);
 
-    // Fetch Gear
     const { data: gearData } = await supabase.from('gear_orders').select('*').order('date', { ascending: false });
     if (gearData) setGearOrders(gearData);
   };
 
-  // --- AUTH ACTIONS ---
+  // AUTH ACTIONS
   const handleAuth = async (e) => {
     e.preventDefault();
     if (!supabase) return;
@@ -128,8 +115,7 @@ export default function PaintballFinanceTracker() {
     setGearOrders([]);
   };
 
-  // --- DATABASE ACTIONS ---
-
+  // DATABASE ACTIONS
   const addPlayer = async () => {
     if (!newPlayerName.trim() || !supabase) return;
     const { error } = await supabase.from('players').insert([{ name: newPlayerName, paid: 0 }]);
@@ -156,7 +142,7 @@ export default function PaintballFinanceTracker() {
       type: newEvent.type,
       date: newEvent.date,
       cost: parseFloat(newEvent.cost),
-      attendees: newEvent.attendees // stored as JSONB
+      attendees: newEvent.attendees 
     }]);
     
     if (!error) {
@@ -182,7 +168,7 @@ export default function PaintballFinanceTracker() {
     const { error } = await supabase.from('gear_orders').insert([{
       description: newOrderMeta.description,
       date: newOrderMeta.date,
-      line_items: currentOrderItems // stored as JSONB
+      line_items: currentOrderItems
     }]);
 
     if (!error) {
@@ -218,7 +204,7 @@ export default function PaintballFinanceTracker() {
     }
   };
 
-  // --- LOGIC HELPERS ---
+  // HELPERS
   const calculatePlayerShare = (playerId) => {
     let totalShare = 0;
     events.forEach(event => {
@@ -238,7 +224,6 @@ export default function PaintballFinanceTracker() {
     return totalShare;
   };
 
-  // --- LOCAL UI HELPERS ---
   const toggleAttendee = (id) => {
     const current = newEvent.attendees;
     setNewEvent({ ...newEvent, attendees: current.includes(id) ? current.filter(x => x !== id) : [...current, id] });
@@ -259,26 +244,32 @@ export default function PaintballFinanceTracker() {
     setNewLineItem({ description: '', cost: '', purchasers: [] });
   };
 
-  // --- RENDER: SETUP ---
+  // RENDER: MISSING CONFIG
   if (!isConfigured) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="bg-white rounded-xl p-8 max-w-md w-full shadow-2xl text-center">
           <Target className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
-          <h2 className="text-2xl font-bold text-slate-800 mb-2">Supabase Setup</h2>
-          <p className="text-slate-600 mb-6">Connect your project to store team data securely.</p>
-          <div className="bg-slate-100 p-4 rounded text-left text-sm font-mono text-slate-700 mb-6 overflow-x-auto">
-            1. Create project at supabase.com<br/>
-            2. Paste API URL & Key in code (line 10)<br/>
-            3. Run the SQL script in the guide to create tables.
+          <h2 className="text-2xl font-bold text-slate-800 mb-2">Missing Configuration</h2>
+          <p className="text-slate-600 mb-6">The app cannot find your Supabase keys.</p>
+          
+          <div className="bg-yellow-50 p-4 rounded text-left text-sm font-mono text-slate-700 mb-6 border border-yellow-200">
+            <strong>How to fix in Netlify:</strong>
+            <ol className="list-decimal ml-4 mt-2 space-y-1">
+              <li>Go to <b>Site settings</b> &gt; <b>Environment variables</b></li>
+              <li>Ensure keys start with <code>VITE_</code></li>
+              <li>Key 1: <code>VITE_SUPABASE_URL</code></li>
+              <li>Key 2: <code>VITE_SUPABASE_ANON_KEY</code></li>
+              <li className="text-red-600 font-bold">Important: Trigger a new Deploy after adding these!</li>
+            </ol>
           </div>
-          <p className="text-xs text-slate-400">See Hosting Guide for SQL script.</p>
+          <p className="text-xs text-slate-400">If you just added them, go to Deploys -> Trigger Deploy.</p>
         </div>
       </div>
     );
   }
 
-  // --- RENDER: LOADING LIBRARY ---
+  // RENDER: LOADING
   if (!isSupabaseLibraryLoaded) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
@@ -287,7 +278,7 @@ export default function PaintballFinanceTracker() {
     );
   }
 
-  // --- RENDER: AUTH ---
+  // RENDER: LOGIN
   if (!session) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -310,7 +301,7 @@ export default function PaintballFinanceTracker() {
     );
   }
 
-  // --- RENDER: DASHBOARD ---
+  // RENDER: DASHBOARD
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-900">
       <div className="max-w-4xl mx-auto pb-10">
@@ -337,7 +328,7 @@ export default function PaintballFinanceTracker() {
                 {[
                    { label: "Expenses", val: events.reduce((a,c)=>a+c.cost,0) + gearOrders.reduce((a,o)=>{const i = typeof o.line_items==='string'?JSON.parse(o.line_items):o.line_items; return a+(i?.reduce((s,li)=>s+li.cost,0)||0)},0), color: "border-blue-500" },
                    { label: "Collected", val: players.reduce((a,c)=>a+(c.paid||0),0), color: "border-emerald-500" },
-                   { label: "Outstanding", val: 0, color: "border-red-500" } // calculated below
+                   { label: "Outstanding", val: 0, color: "border-red-500" }
                 ].map((stat, i) => {
                   const totalExp = events.reduce((a,c)=>a+c.cost,0) + gearOrders.reduce((a,o)=>{const items = typeof o.line_items==='string'?JSON.parse(o.line_items):o.line_items; return a+(items?.reduce((s,li)=>s+li.cost,0)||0)},0);
                   const collected = players.reduce((a,c)=>a+(c.paid||0),0);
