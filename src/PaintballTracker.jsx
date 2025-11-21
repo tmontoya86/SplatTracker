@@ -6,7 +6,7 @@ import { Users, Calendar, DollarSign, Plus, Trash2, Save, Target, Shield, CheckC
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-const isConfigured = supabaseUrl && supabaseKey && supabaseUrl !== "PASTE_YOUR_SUPABASE_URL_HERE";
+const isConfigured = supabaseUrl && supabaseKey && supabaseUrl !== "https://dpdhgtngzmynyergynhu.supabase.co";
 
 export default function PaintballFinanceTracker() {
   const [supabase, setSupabase] = useState(null);
