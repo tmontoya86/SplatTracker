@@ -6,7 +6,7 @@ import { Users, Calendar, DollarSign, Plus, Trash2, Save, Target, Shield, CheckC
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-const isConfigured = supabaseUrl && supabaseKey && supabaseUrl !== "https://dpdhgtngzmynyergynhu.supabase.co";
+const isConfigured = supabaseUrl && supabaseKey && supabaseUrl !== "PASTE_YOUR_SUPABASE_URL_HERE";
 
 export default function PaintballFinanceTracker() {
   const [supabase, setSupabase] = useState(null);
@@ -244,26 +244,32 @@ export default function PaintballFinanceTracker() {
     setNewLineItem({ description: '', cost: '', purchasers: [] });
   };
 
-  // RENDER: MISSING CONFIG
+  // RENDER: MISSING CONFIG (WITH DEBUG INFO)
   if (!isConfigured) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="bg-white rounded-xl p-8 max-w-md w-full shadow-2xl text-center">
           <Target className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
-          <h2 className="text-2xl font-bold text-slate-800 mb-2">Missing Configuration</h2>
-          <p className="text-slate-600 mb-6">The app cannot find your Supabase keys.</p>
+          <h2 className="text-2xl font-bold text-slate-800 mb-2">Configuration Issue</h2>
+          <p className="text-slate-600 mb-4">The app cannot read your Supabase keys.</p>
           
-          <div className="bg-yellow-50 p-4 rounded text-left text-sm font-mono text-slate-700 mb-6 border border-yellow-200">
-            <strong>How to fix in Netlify:</strong>
-            <ol className="list-decimal ml-4 mt-2 space-y-1">
-              <li>Go to <b>Site settings</b> &gt; <b>Environment variables</b></li>
-              <li>Ensure keys start with <code>VITE_</code></li>
-              <li>Key 1: <code>VITE_SUPABASE_URL</code></li>
-              <li>Key 2: <code>VITE_SUPABASE_ANON_KEY</code></li>
-              <li className="text-red-600 font-bold">Important: Trigger a new Deploy after adding these!</li>
-            </ol>
+          {/* DEBUG SECTION */}
+          <div className="bg-slate-100 p-3 rounded text-xs font-mono text-left mb-6 border border-slate-300">
+            <p className="font-bold text-slate-900 border-b border-slate-300 pb-1 mb-2">Debug Info:</p>
+            <p>URL Found: <span className={supabaseUrl ? "text-emerald-600 font-bold" : "text-red-600 font-bold"}>{supabaseUrl ? "YES" : "NO"}</span></p>
+            <p>Key Found: <span className={supabaseKey ? "text-emerald-600 font-bold" : "text-red-600 font-bold"}>{supabaseKey ? "YES" : "NO"}</span></p>
+            <p className="mt-2 text-slate-500 italic">If NO: Keys are missing or wrong name.</p>
           </div>
-          <p className="text-xs text-slate-400">If you just added them, go to Deploys -> Trigger Deploy.</p>
+
+          <div className="text-left text-sm text-slate-700 space-y-2">
+             <p><strong>1. Check Spelling:</strong></p>
+             <ul className="list-disc ml-5 text-xs font-mono bg-slate-50 p-2 rounded">
+               <li>VITE_SUPABASE_URL</li>
+               <li>VITE_SUPABASE_ANON_KEY</li>
+             </ul>
+             <p><strong>2. Did you re-deploy?</strong></p>
+             <p className="text-xs text-slate-500">Netlify needs a "Trigger Deploy" to bake these variables into the app code. They don't update live.</p>
+          </div>
         </div>
       </div>
     );
