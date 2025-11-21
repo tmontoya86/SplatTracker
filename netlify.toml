@@ -1,0 +1,14 @@
+[build]
+  # The command to build your React site
+  command = "npm run build"
+  
+  # The folder where the built files go.
+  # If you used 'create-react-app', change "dist" to "build" below.
+  # If you used 'vite' (recommended), keep it as "dist".
+  publish = "dist" 
+
+# This section fixes the "Page Not Found" on refresh or direct link
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
