@@ -2,8 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { Users, Calendar, DollarSign, Plus, Trash2, Save, Target, Shield, CheckCircle, ShoppingBag, ListPlus, X, LogOut, Lock, UserPlus, Mail, AlertTriangle, Link as LinkIcon } from 'lucide-react';
 
 // --- CONFIGURATION ---
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// We use a safe check here so it works in the Preview window AND on Netlify.
+// In a real Vite app, import.meta.env is always available.
+const getEnv = (key) => {
+  try {
+    return import.meta.env[key];
+  } catch (e) {
+    return ""; // Fallback for environments that don't support import.meta
+  }
+};
+
+const supabaseUrl = getEnv("VITE_SUPABASE_URL");
+const supabaseKey = getEnv("VITE_SUPABASE_ANON_KEY");
 
 const isConfigured = supabaseUrl && supabaseKey && supabaseUrl !== "PASTE_YOUR_SUPABASE_URL_HERE";
 
@@ -13,7 +23,7 @@ export default function PaintballFinanceTracker() {
 
   const [session, setSession] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [isAuthorized, setIsAuthorized] = useState(false); // NEW: Check if user is on the roster
+  const [isAuthorized, setIsAuthorized] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
 
   // Data States
@@ -142,7 +152,7 @@ export default function PaintballFinanceTracker() {
 
   // --- ADMIN ACTIONS ---
 
-  // NEW: Add to Roster (No Login Creation)
+  // Add to Roster (No Login Creation)
   const addToRoster = async (e) => {
     e.preventDefault();
     if (!newPlayerName || !newPlayerEmail) {
@@ -284,7 +294,24 @@ export default function PaintballFinanceTracker() {
   };
 
   // RENDER: MISSING CONFIG
-  if (!isConfigured) return <div className="p-10 text-center">Missing ENV Keys in Netlify</div>;
+  if (!isConfigured) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl p-8 max-w-md w-full shadow-2xl text-center">
+          <Target className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-slate-800 mb-2">Configuration Issue</h2>
+          <p className="text-slate-600 mb-4">The app cannot read your Supabase keys.</p>
+          <div className="bg-yellow-50 p-4 rounded text-left text-sm font-mono text-slate-700 mb-6 border border-yellow-200">
+            <strong>Check Netlify Settings:</strong><br/>
+            1. Key: <code>VITE_SUPABASE_URL</code><br/>
+            2. Key: <code>VITE_SUPABASE_ANON_KEY</code><br/>
+            3. Trigger a <b>new deploy</b> after saving!
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!isSupabaseLibraryLoaded) return <div className="p-10 text-center">Loading...</div>;
 
   // --- RENDER: LOGIN ---
