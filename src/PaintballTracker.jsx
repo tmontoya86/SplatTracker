@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Calendar, DollarSign, Plus, Trash2, Save, Target, Shield, CheckCircle, ShoppingBag, ListPlus, X, LogOut, Lock, UserPlus, AlertTriangle } from 'lucide-react';
+import { Users, Calendar, DollarSign, Plus, Trash2, Save, Target, Shield, CheckCircle, ShoppingBag, ListPlus, X, LogOut, Lock, UserPlus, Mail, AlertTriangle, Link as LinkIcon } from 'lucide-react';
 
 // --- CONFIGURATION ---
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -12,7 +12,8 @@ export default function PaintballFinanceTracker() {
   const [isSupabaseLibraryLoaded, setIsSupabaseLibraryLoaded] = useState(false);
 
   const [session, setSession] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false); // NEW: Role State
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAuthorized, setIsAuthorized] = useState(false); // NEW: Check if user is on the roster
   const [activeTab, setActiveTab] = useState('dashboard');
 
   // Data States
@@ -23,13 +24,13 @@ export default function PaintballFinanceTracker() {
   // Auth States
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoginView, setIsLoginView] = useState(true);
   const [authError, setAuthError] = useState('');
 
   // Form States
   const [newPlayerName, setNewPlayerName] = useState('');
-  const [newPlayerEmail, setNewPlayerEmail] = useState(''); // NEW
-  const [newPlayerPassword, setNewPlayerPassword] = useState(''); // NEW
-  const [makeAdmin, setMakeAdmin] = useState(false); // NEW
+  const [newPlayerEmail, setNewPlayerEmail] = useState('');
+  const [makeAdmin, setMakeAdmin] = useState(false);
 
   const [newEvent, setNewEvent] = useState({ type: 'Practice', date: '', cost: '', attendees: [] });
   const [newOrderMeta, setNewOrderMeta] = useState({ description: '', date: '' });
@@ -57,41 +58,45 @@ export default function PaintballFinanceTracker() {
     document.head.appendChild(script);
   }, []);
 
-  // 2. INITIALIZATION & ROLE CHECK
+  // 2. INITIALIZATION & ACCESS CHECK
   useEffect(() => {
     if (!supabase) return;
 
-    const checkUserRole = async (userEmail) => {
+    const checkUserAccess = async (userEmail) => {
       if (!userEmail) return;
-      // Look up the user in the players table to see if they are an admin
+      
+      // Check if this email exists in the players table (Roster)
       const { data, error } = await supabase
         .from('players')
         .select('is_admin')
         .eq('email', userEmail)
-        .maybeSingle(); // Use maybeSingle to avoid errors if user isn't in roster yet
+        .maybeSingle();
       
-      if (data && data.is_admin) {
-        setIsAdmin(true);
+      if (data) {
+        setIsAuthorized(true); // They are on the team
+        setIsAdmin(data.is_admin); // Are they an admin?
+        fetchAllData(); // Only fetch data if authorized
       } else {
+        setIsAuthorized(false); // Login successful, but not on roster
         setIsAdmin(false);
       }
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) {
-        checkUserRole(session.user.email);
-        fetchAllData();
-      }
+      if (session) checkUserAccess(session.user.email);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
-        checkUserRole(session.user.email);
-        fetchAllData();
+        checkUserAccess(session.user.email);
       } else {
         setIsAdmin(false);
+        setIsAuthorized(false);
+        setPlayers([]);
+        setEvents([]);
+        setGearOrders([]);
       }
     });
 
@@ -110,65 +115,63 @@ export default function PaintballFinanceTracker() {
   };
 
   // AUTH ACTIONS
-  const handleLogin = async (e) => {
+  const handleAuth = async (e) => {
     e.preventDefault();
     if (!supabase) return;
     setAuthError('');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setAuthError(error.message);
+    
+    try {
+      if (isLoginView) {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      } else {
+        // User Self-Registration
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        alert("Success! If this is a new account, ask your Admin to approve your email.");
+      }
+    } catch (err) {
+      setAuthError(err.message);
+    }
   };
 
   const handleLogout = async () => {
     if (!supabase) return;
     await supabase.auth.signOut();
-    setPlayers([]);
-    setEvents([]);
-    setGearOrders([]);
   };
 
   // --- ADMIN ACTIONS ---
 
-  // 1. Create Player AND Login
-  const createPlayerAndLogin = async (e) => {
+  // NEW: Add to Roster (No Login Creation)
+  const addToRoster = async (e) => {
     e.preventDefault();
-    if (!newPlayerName || !newPlayerEmail || !newPlayerPassword) {
-      alert("Name, Email, and Password required.");
+    if (!newPlayerName || !newPlayerEmail) {
+      alert("Name and Email are required.");
       return;
     }
 
-    if (!window.confirm("Creating a login will verify this user immediately. Proceed?")) return;
-
-    // A. Create Supabase Auth User
-    // Note: In client-side Supabase, signUp automatically logs you in as the new user.
-    // We have to handle this UX gracefully.
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: newPlayerEmail,
-      password: newPlayerPassword
-    });
-
-    if (authError) {
-      alert("Error creating login: " + authError.message);
-      return;
-    }
-
-    // B. Add to Players Table (Roster)
-    const { error: dbError } = await supabase.from('players').insert([{
+    const { error } = await supabase.from('players').insert([{
       name: newPlayerName,
       email: newPlayerEmail,
       paid: 0,
       is_admin: makeAdmin
     }]);
 
-    if (dbError) {
-      alert("Login created, but failed to add to roster: " + dbError.message);
+    if (error) {
+      alert("Error adding to roster: " + error.message);
     } else {
-      alert(`User ${newPlayerName} created! You have been logged in as the new user. Please log out and log back in as Admin.`);
-      // The session state will change automatically due to the listener
+      setNewPlayerName('');
+      setNewPlayerEmail('');
+      setMakeAdmin(false);
+      fetchAllData();
+      
+      // Prompt to send invite
+      if (window.confirm(`${newPlayerName} added! Open email to send them an invite link?`)) {
+        const subject = "Join Paintball Finance Tracker";
+        const body = `Hey ${newPlayerName}, I added you to the team finance tracker. \n\nPlease go here and click 'Sign Up' using this email (${newPlayerEmail}) to set your password: \n\n${window.location.href}`;
+        window.open(`mailto:${newPlayerEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+      }
     }
-    
-    setNewPlayerName('');
-    setNewPlayerEmail('');
-    setNewPlayerPassword('');
   };
 
   const deletePlayer = async (id) => {
@@ -248,7 +251,7 @@ export default function PaintballFinanceTracker() {
     fetchAllData();
   };
 
-  // HELPERS & UI LOGIC
+  // HELPERS
   const calculatePlayerShare = (playerId) => {
     let totalShare = 0;
     events.forEach(event => {
@@ -264,7 +267,6 @@ export default function PaintballFinanceTracker() {
     return totalShare;
   };
 
-  // Toggles
   const toggleAttendee = (id) => {
     const current = newEvent.attendees;
     setNewEvent({ ...newEvent, attendees: current.includes(id) ? current.filter(x => x !== id) : [...current, id] });
@@ -281,11 +283,11 @@ export default function PaintballFinanceTracker() {
     setNewLineItem({ description: '', cost: '', purchasers: [] });
   };
 
-  // --- RENDER: SETUP ---
-  if (!isConfigured) return <div className="p-10 text-center">Missing ENV Keys</div>;
+  // RENDER: MISSING CONFIG
+  if (!isConfigured) return <div className="p-10 text-center">Missing ENV Keys in Netlify</div>;
   if (!isSupabaseLibraryLoaded) return <div className="p-10 text-center">Loading...</div>;
 
-  // --- RENDER: LOGIN (NO SIGNUP LINK) ---
+  // --- RENDER: LOGIN ---
   if (!session) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -293,10 +295,9 @@ export default function PaintballFinanceTracker() {
           <div className="text-center mb-6">
              <Target className="w-12 h-12 text-emerald-600 mx-auto mb-2" />
              <h1 className="text-2xl font-bold text-slate-800">Team Portal</h1>
-             <p className="text-xs text-slate-400">Authorized Access Only</p>
           </div>
           {authError && <div className="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm">{authError}</div>}
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleAuth} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Email</label>
               <input type="email" required className="w-full p-2 border rounded bg-slate-50" value={email} onChange={e => setEmail(e.target.value)} />
@@ -305,11 +306,34 @@ export default function PaintballFinanceTracker() {
               <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Password</label>
               <input type="password" required className="w-full p-2 border rounded bg-slate-50" value={password} onChange={e => setPassword(e.target.value)} />
             </div>
-            <button type="submit" className="w-full bg-slate-900 text-white py-3 rounded font-bold hover:bg-slate-800">Sign In</button>
+            <button type="submit" className="w-full bg-slate-900 text-white py-3 rounded font-bold hover:bg-slate-800">
+              {isLoginView ? "Sign In" : "Create Account"}
+            </button>
           </form>
-          <div className="mt-6 text-center text-xs text-slate-400">
-            Don't have a login? Contact your Team Manager.
+          <div className="mt-6 text-center">
+            <button onClick={() => setIsLoginView(!isLoginView)} className="text-sm text-emerald-600 hover:underline">
+               {isLoginView ? "Need to create a password? Sign Up" : "Back to Sign In"}
+            </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- RENDER: ACCESS DENIED ---
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-xl shadow text-center max-w-md">
+           <AlertTriangle className="w-12 h-12 text-orange-500 mx-auto mb-4"/>
+           <h2 className="text-xl font-bold text-slate-800 mb-2">Access Pending</h2>
+           <p className="text-slate-600 mb-6">
+             You are logged in as <strong>{session.user.email}</strong>, but this email is not on the team roster yet.
+           </p>
+           <div className="bg-slate-50 p-4 rounded text-sm text-slate-500 mb-6">
+             Ask your Admin to add <b>{session.user.email}</b> to the Roster. Once added, refresh this page.
+           </div>
+           <button onClick={handleLogout} className="text-emerald-600 font-bold hover:underline">Sign Out</button>
         </div>
       </div>
     );
@@ -502,29 +526,21 @@ export default function PaintballFinanceTracker() {
             <div className="space-y-6">
               {isAdmin && (
                 <div className="bg-white p-6 rounded shadow max-w-xl mx-auto border-l-4 border-purple-500">
-                   <h2 className="font-bold mb-4 flex items-center"><UserPlus className="w-5 h-5 mr-2"/> Create Player Login</h2>
-                   <div className="bg-yellow-50 p-3 rounded text-xs text-yellow-800 mb-4 flex items-start">
-                      <AlertTriangle className="w-4 h-4 mr-2 flex-shrink-0" />
-                      <span>Note: Creating a login will immediately log you out of your current Admin session. You will need to log back in.</span>
-                   </div>
-                   <form onSubmit={createPlayerAndLogin} className="space-y-3">
+                   <h2 className="font-bold mb-4 flex items-center"><UserPlus className="w-5 h-5 mr-2"/> Add Teammate</h2>
+                   <form onSubmit={addToRoster} className="space-y-3">
                      <div>
                        <label className="block text-xs font-bold text-slate-500 uppercase">Player Name</label>
                        <input className="w-full border p-2 rounded" placeholder="e.g. Viper" value={newPlayerName} onChange={e=>setNewPlayerName(e.target.value)}/>
                      </div>
                      <div>
-                       <label className="block text-xs font-bold text-slate-500 uppercase">Login Email</label>
+                       <label className="block text-xs font-bold text-slate-500 uppercase">Email (For Login)</label>
                        <input type="email" className="w-full border p-2 rounded" placeholder="player@team.com" value={newPlayerEmail} onChange={e=>setNewPlayerEmail(e.target.value)}/>
                      </div>
-                     <div>
-                       <label className="block text-xs font-bold text-slate-500 uppercase">Login Password</label>
-                       <input type="password" className="w-full border p-2 rounded" placeholder="********" value={newPlayerPassword} onChange={e=>setNewPlayerPassword(e.target.value)}/>
-                     </div>
-                     <div className="flex items-center gap-2">
+                     <div className="flex items-center gap-2 bg-slate-50 p-2 rounded border">
                        <input type="checkbox" id="isAdmin" checked={makeAdmin} onChange={e => setMakeAdmin(e.target.checked)} />
                        <label htmlFor="isAdmin" className="text-sm font-bold text-slate-700">Grant Admin Access?</label>
                      </div>
-                     <button type="submit" className="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded font-bold">Create Login & Add to Roster</button>
+                     <button type="submit" className="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded font-bold">Add & Invite</button>
                    </form>
                 </div>
               )}
@@ -541,7 +557,18 @@ export default function PaintballFinanceTracker() {
                          </div>
                          <div className="text-xs text-slate-400">{p.email || "No email linked"}</div>
                        </div>
-                       {isAdmin && <button onClick={()=>deletePlayer(p.id)} className="text-red-300 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>}
+                       <div className="flex items-center gap-3">
+                         {isAdmin && p.email && (
+                           <a 
+                             href={`mailto:${p.email}?subject=Join Paintball Finance Tracker&body=Hey ${p.name}, sign up here: ${window.location.href}`}
+                             className="text-blue-400 hover:text-blue-600"
+                             title="Send Email Invite"
+                           >
+                             <Mail className="w-4 h-4" />
+                           </a>
+                         )}
+                         {isAdmin && <button onClick={()=>deletePlayer(p.id)} className="text-red-300 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>}
+                       </div>
                      </div>
                    ))}
                  </div>
