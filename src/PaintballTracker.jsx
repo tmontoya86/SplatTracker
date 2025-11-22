@@ -1,21 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Calendar, DollarSign, Plus, Trash2, Save, Target, Shield, CheckCircle, ShoppingBag, ListPlus, X, LogOut, Lock, UserPlus, Mail, AlertTriangle, Link as LinkIcon } from 'lucide-react';
+import { Users, Calendar, DollarSign, Plus, Trash2, Save, Target, Shield, CheckCircle, ShoppingBag, ListPlus, X, LogOut, Lock, UserPlus, Mail, AlertTriangle, Link as LinkIcon, Send } from 'lucide-react';
+import emailjs from '@emailjs/browser';
 
 // --- CONFIGURATION ---
-// We use a safe check here so it works in the Preview window AND on Netlify.
-// In a real Vite app, import.meta.env is always available.
 const getEnv = (key) => {
-  try {
-    return import.meta.env[key];
-  } catch (e) {
-    return ""; // Fallback for environments that don't support import.meta
-  }
+  try { return import.meta.env[key]; } catch (e) { return ""; }
 };
 
 const supabaseUrl = getEnv("VITE_SUPABASE_URL");
 const supabaseKey = getEnv("VITE_SUPABASE_ANON_KEY");
 
-const isConfigured = supabaseUrl && supabaseKey && supabaseUrl !== "PASTE_YOUR_SUPABASE_URL_HERE";
+// EmailJS Keys
+const emailServiceId = getEnv("VITE_EMAILJS_SERVICE_ID");
+const emailTemplateId = getEnv("VITE_EMAILJS_TEMPLATE_ID");
+const emailPublicKey = getEnv("VITE_EMAILJS_PUBLIC_KEY");
+
+const isConfigured = supabaseUrl && supabaseKey;
 
 export default function PaintballFinanceTracker() {
   const [supabase, setSupabase] = useState(null);
@@ -52,20 +52,24 @@ export default function PaintballFinanceTracker() {
   // 1. DYNAMIC SCRIPT LOADING
   useEffect(() => {
     if (!isConfigured) return;
+    // Load Supabase
     if (window.supabase && window.supabase.createClient) {
       setSupabase(window.supabase.createClient(supabaseUrl, supabaseKey));
       setIsSupabaseLibraryLoaded(true);
-      return;
+    } else {
+      const script = document.createElement('script');
+      script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
+      script.onload = () => {
+        if (window.supabase && window.supabase.createClient) {
+          setSupabase(window.supabase.createClient(supabaseUrl, supabaseKey));
+          setIsSupabaseLibraryLoaded(true);
+        }
+      };
+      document.head.appendChild(script);
     }
-    const script = document.createElement('script');
-    script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
-    script.onload = () => {
-      if (window.supabase && window.supabase.createClient) {
-        setSupabase(window.supabase.createClient(supabaseUrl, supabaseKey));
-        setIsSupabaseLibraryLoaded(true);
-      }
-    };
-    document.head.appendChild(script);
+    
+    // Initialize EmailJS
+    if (emailPublicKey) emailjs.init(emailPublicKey);
   }, []);
 
   // 2. INITIALIZATION & ACCESS CHECK
@@ -74,20 +78,13 @@ export default function PaintballFinanceTracker() {
 
     const checkUserAccess = async (userEmail) => {
       if (!userEmail) return;
-      
-      // Check if this email exists in the players table (Roster)
-      const { data, error } = await supabase
-        .from('players')
-        .select('is_admin')
-        .eq('email', userEmail)
-        .maybeSingle();
-      
+      const { data } = await supabase.from('players').select('is_admin').eq('email', userEmail).maybeSingle();
       if (data) {
-        setIsAuthorized(true); // They are on the team
-        setIsAdmin(data.is_admin); // Are they an admin?
-        fetchAllData(); // Only fetch data if authorized
+        setIsAuthorized(true);
+        setIsAdmin(data.is_admin);
+        fetchAllData();
       } else {
-        setIsAuthorized(false); // Login successful, but not on roster
+        setIsAuthorized(false);
         setIsAdmin(false);
       }
     };
@@ -99,21 +96,13 @@ export default function PaintballFinanceTracker() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) {
-        checkUserAccess(session.user.email);
-      } else {
-        setIsAdmin(false);
-        setIsAuthorized(false);
-        setPlayers([]);
-        setEvents([]);
-        setGearOrders([]);
-      }
+      if (session) checkUserAccess(session.user.email);
+      else { setIsAdmin(false); setIsAuthorized(false); setPlayers([]); setEvents([]); setGearOrders([]); }
     });
 
     return () => subscription.unsubscribe();
   }, [supabase]);
 
-  // DATA FETCHING
   const fetchAllData = async () => {
     if (!supabase) return;
     const { data: p } = await supabase.from('players').select('*').order('name');
@@ -124,86 +113,89 @@ export default function PaintballFinanceTracker() {
     if (g) setGearOrders(g);
   };
 
-  // AUTH ACTIONS
+  // --- EMAIL NOTIFICATION HELPER ---
+  const sendNotifications = (recipients, eventName, date, amountPerPerson) => {
+    if (!emailServiceId || !emailTemplateId) return; // Skip if not configured
+    
+    // Filter for players who have an email address
+    const validRecipients = recipients.filter(p => p.email && p.email.includes('@'));
+    
+    if (validRecipients.length === 0) return;
+
+    if (!window.confirm(`Send email notifications to ${validRecipients.length} players?`)) return;
+
+    validRecipients.forEach(player => {
+      emailjs.send(emailServiceId, emailTemplateId, {
+        to_name: player.name,
+        to_email: player.email,
+        event_name: eventName,
+        date: date,
+        amount: amountPerPerson.toFixed(2)
+      }).then(
+        () => console.log(`Email sent to ${player.name}`),
+        (error) => console.error(`Failed to send to ${player.name}`, error)
+      );
+    });
+    alert("Notifications queued!");
+  };
+
+  // --- ACTIONS ---
+
   const handleAuth = async (e) => {
     e.preventDefault();
     if (!supabase) return;
     setAuthError('');
-    
     try {
       if (isLoginView) {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
-        // User Self-Registration
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         alert("Success! If this is a new account, ask your Admin to approve your email.");
       }
-    } catch (err) {
-      setAuthError(err.message);
-    }
+    } catch (err) { setAuthError(err.message); }
   };
 
-  const handleLogout = async () => {
-    if (!supabase) return;
-    await supabase.auth.signOut();
-  };
+  const handleLogout = async () => { if (supabase) await supabase.auth.signOut(); };
 
-  // --- ADMIN ACTIONS ---
-
-  // Add to Roster (No Login Creation)
   const addToRoster = async (e) => {
     e.preventDefault();
-    if (!newPlayerName || !newPlayerEmail) {
-      alert("Name and Email are required.");
-      return;
-    }
-
-    const { error } = await supabase.from('players').insert([{
-      name: newPlayerName,
-      email: newPlayerEmail,
-      paid: 0,
-      is_admin: makeAdmin
-    }]);
-
-    if (error) {
-      alert("Error adding to roster: " + error.message);
-    } else {
-      setNewPlayerName('');
-      setNewPlayerEmail('');
-      setMakeAdmin(false);
-      fetchAllData();
-      
-      // Prompt to send invite
-      if (window.confirm(`${newPlayerName} added! Open email to send them an invite link?`)) {
-        const subject = "Join Paintball Finance Tracker";
-        const body = `Hey ${newPlayerName}, I added you to the team finance tracker. \n\nPlease go here and click 'Sign Up' using this email (${newPlayerEmail}) to set your password: \n\n${window.location.href}`;
-        window.open(`mailto:${newPlayerEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+    if (!newPlayerName || !newPlayerEmail) return alert("Name/Email required.");
+    const { error } = await supabase.from('players').insert([{ name: newPlayerName, email: newPlayerEmail, paid: 0, is_admin: makeAdmin }]);
+    if (error) { alert(error.message); } 
+    else {
+      setNewPlayerName(''); setNewPlayerEmail(''); setMakeAdmin(false); fetchAllData();
+      if (window.confirm(`Send invite to ${newPlayerEmail}?`)) {
+        window.open(`mailto:${newPlayerEmail}?subject=Join Paintball Finance Tracker&body=Go here to signup: ${window.location.href}`);
       }
     }
   };
 
   const deletePlayer = async (id) => {
-    if (!isAdmin) return;
-    if (!window.confirm("Delete player?")) return;
+    if (!isAdmin || !window.confirm("Delete player?")) return;
     await supabase.from('players').delete().eq('id', id);
     fetchAllData();
   };
 
+  // SUBMIT EVENT (WITH EMAIL)
   const submitEvent = async () => {
     if (!isAdmin) return;
-    if (!newEvent.date || !newEvent.cost || newEvent.attendees.length === 0) {
-      alert("Fill all fields.");
-      return;
-    }
+    if (!newEvent.date || !newEvent.cost || newEvent.attendees.length === 0) return alert("Fill all fields.");
+    
     const { error } = await supabase.from('events').insert([{
       type: newEvent.type,
       date: newEvent.date,
       cost: parseFloat(newEvent.cost),
       attendees: newEvent.attendees 
     }]);
+
     if (!error) {
+      // Calculate split and trigger email
+      const splitCost = parseFloat(newEvent.cost) / newEvent.attendees.length;
+      const affectedPlayers = players.filter(p => newEvent.attendees.includes(p.id));
+      sendNotifications(affectedPlayers, newEvent.type, newEvent.date, splitCost);
+
       setNewEvent({ type: 'Practice', date: '', cost: '', attendees: [] });
       setActiveTab('dashboard');
       fetchAllData();
@@ -211,25 +203,50 @@ export default function PaintballFinanceTracker() {
   };
 
   const deleteEvent = async (id) => {
-    if (!isAdmin) return;
-    if (window.confirm("Delete event?")) {
-      await supabase.from('events').delete().eq('id', id);
-      fetchAllData();
-    }
+    if (!isAdmin || !window.confirm("Delete event?")) return;
+    await supabase.from('events').delete().eq('id', id);
+    fetchAllData();
   };
 
+  // SUBMIT GEAR (WITH EMAIL)
   const submitFullOrder = async () => {
     if (!isAdmin) return;
-    if (!newOrderMeta.date || !newOrderMeta.description || currentOrderItems.length === 0) {
-      alert("Missing details.");
-      return;
-    }
+    if (!newOrderMeta.date || !newOrderMeta.description || currentOrderItems.length === 0) return alert("Missing details.");
+    
     const { error } = await supabase.from('gear_orders').insert([{
       description: newOrderMeta.description,
       date: newOrderMeta.date,
       line_items: currentOrderItems
     }]);
+
     if (!error) {
+      // More complex email logic for gear (varying amounts)
+      if (window.confirm("Send itemized emails to purchasers?")) {
+        // Group items by purchaser
+        const playerCosts = {}; // { playerId: totalCost }
+        currentOrderItems.forEach(item => {
+           const split = item.cost / item.purchasers.length;
+           item.purchasers.forEach(pid => {
+             playerCosts[pid] = (playerCosts[pid] || 0) + split;
+           });
+        });
+
+        // Send email to each
+        Object.keys(playerCosts).forEach(pid => {
+           const player = players.find(p => p.id === parseInt(pid));
+           if (player && player.email && playerCosts[pid] > 0) {
+             emailjs.send(emailServiceId, emailTemplateId, {
+                to_name: player.name,
+                to_email: player.email,
+                event_name: `Gear Order: ${newOrderMeta.description}`,
+                date: newOrderMeta.date,
+                amount: playerCosts[pid].toFixed(2)
+             });
+           }
+        });
+        alert("Gear notifications sent.");
+      }
+
       setNewOrderMeta({ description: '', date: '' });
       setNewLineItem({ description: '', cost: '', purchasers: [] });
       setCurrentOrderItems([]);
@@ -239,21 +256,16 @@ export default function PaintballFinanceTracker() {
   };
 
   const deleteOrder = async (id) => {
-    if (!isAdmin) return;
-    if (window.confirm("Delete order?")) {
-      await supabase.from('gear_orders').delete().eq('id', id);
-      fetchAllData();
-    }
+    if (!isAdmin || !window.confirm("Delete order?")) return;
+    await supabase.from('gear_orders').delete().eq('id', id);
+    fetchAllData();
   };
 
   const recordPayment = async (e) => {
     e.preventDefault();
-    if (!isAdmin) return;
-    if (!selectedPlayerForPayment || !paymentAmount) return;
-    
+    if (!isAdmin || !selectedPlayerForPayment || !paymentAmount) return;
     const player = players.find(p => p.id === parseInt(selectedPlayerForPayment));
     if (!player) return;
-
     const newPaidTotal = (player.paid || 0) + parseFloat(paymentAmount);
     await supabase.from('players').update({ paid: newPaidTotal }).eq('id', player.id);
     setPaymentAmount('');
@@ -261,7 +273,7 @@ export default function PaintballFinanceTracker() {
     fetchAllData();
   };
 
-  // HELPERS
+  // HELPERS & UI LOGIC
   const calculatePlayerShare = (playerId) => {
     let totalShare = 0;
     events.forEach(event => {
@@ -293,28 +305,11 @@ export default function PaintballFinanceTracker() {
     setNewLineItem({ description: '', cost: '', purchasers: [] });
   };
 
-  // RENDER: MISSING CONFIG
-  if (!isConfigured) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl p-8 max-w-md w-full shadow-2xl text-center">
-          <Target className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
-          <h2 className="text-2xl font-bold text-slate-800 mb-2">Configuration Issue</h2>
-          <p className="text-slate-600 mb-4">The app cannot read your Supabase keys.</p>
-          <div className="bg-yellow-50 p-4 rounded text-left text-sm font-mono text-slate-700 mb-6 border border-yellow-200">
-            <strong>Check Netlify Settings:</strong><br/>
-            1. Key: <code>VITE_SUPABASE_URL</code><br/>
-            2. Key: <code>VITE_SUPABASE_ANON_KEY</code><br/>
-            3. Trigger a <b>new deploy</b> after saving!
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // RENDER: SETUP
+  if (!isConfigured) return <div className="p-10 text-center">Missing ENV Keys</div>;
   if (!isSupabaseLibraryLoaded) return <div className="p-10 text-center">Loading...</div>;
 
-  // --- RENDER: LOGIN ---
+  // RENDER: LOGIN
   if (!session) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -325,83 +320,53 @@ export default function PaintballFinanceTracker() {
           </div>
           {authError && <div className="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm">{authError}</div>}
           <form onSubmit={handleAuth} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Email</label>
-              <input type="email" required className="w-full p-2 border rounded bg-slate-50" value={email} onChange={e => setEmail(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Password</label>
-              <input type="password" required className="w-full p-2 border rounded bg-slate-50" value={password} onChange={e => setPassword(e.target.value)} />
-            </div>
-            <button type="submit" className="w-full bg-slate-900 text-white py-3 rounded font-bold hover:bg-slate-800">
-              {isLoginView ? "Sign In" : "Create Account"}
-            </button>
+            <input type="email" required className="w-full p-2 border" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
+            <input type="password" required className="w-full p-2 border" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} />
+            <button type="submit" className="w-full bg-slate-900 text-white py-3 rounded font-bold">{isLoginView ? "Sign In" : "Create Account"}</button>
           </form>
           <div className="mt-6 text-center">
-            <button onClick={() => setIsLoginView(!isLoginView)} className="text-sm text-emerald-600 hover:underline">
-               {isLoginView ? "Need to create a password? Sign Up" : "Back to Sign In"}
-            </button>
+            <button onClick={() => setIsLoginView(!isLoginView)} className="text-sm text-emerald-600 hover:underline">{isLoginView ? "New? Create Password" : "Back to Login"}</button>
           </div>
         </div>
       </div>
     );
   }
 
-  // --- RENDER: ACCESS DENIED ---
+  // RENDER: DENIED
   if (!isAuthorized) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
         <div className="bg-white p-8 rounded-xl shadow text-center max-w-md">
            <AlertTriangle className="w-12 h-12 text-orange-500 mx-auto mb-4"/>
-           <h2 className="text-xl font-bold text-slate-800 mb-2">Access Pending</h2>
-           <p className="text-slate-600 mb-6">
-             You are logged in as <strong>{session.user.email}</strong>, but this email is not on the team roster yet.
-           </p>
-           <div className="bg-slate-50 p-4 rounded text-sm text-slate-500 mb-6">
-             Ask your Admin to add <b>{session.user.email}</b> to the Roster. Once added, refresh this page.
-           </div>
-           <button onClick={handleLogout} className="text-emerald-600 font-bold hover:underline">Sign Out</button>
+           <h2 className="text-xl font-bold">Access Pending</h2>
+           <p className="text-slate-600 mb-4">Logged in as <strong>{session.user.email}</strong>, but not on the roster.</p>
+           <button onClick={handleLogout} className="text-emerald-600 font-bold">Sign Out</button>
         </div>
       </div>
     );
   }
 
-  // --- RENDER: MAIN APP ---
+  // RENDER: MAIN
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-900">
       <div className="max-w-4xl mx-auto pb-10">
-        {/* Header */}
         <div className="bg-slate-900 text-white p-6 rounded-b-2xl shadow-lg mb-6">
           <div className="flex justify-between items-center">
             <div className="flex items-center">
                <Target className="w-8 h-8 mr-3 text-emerald-400"/>
-               <div>
-                 <h1 className="text-xl font-extrabold">Splat<span className="text-emerald-400">Tracker</span></h1>
-                 <div className="flex items-center gap-2">
-                    <p className="text-xs text-slate-400">{session.user.email}</p>
-                    {isAdmin ? 
-                      <span className="text-[10px] bg-emerald-500 text-emerald-900 px-2 rounded-full font-bold">ADMIN</span> : 
-                      <span className="text-[10px] bg-slate-700 text-slate-300 px-2 rounded-full">VIEW ONLY</span>
-                    }
-                 </div>
-               </div>
+               <div><h1 className="text-xl font-extrabold">Splat<span className="text-emerald-400">Tracker</span></h1><div className="flex items-center gap-2"><p className="text-xs text-slate-400">{session.user.email}</p>{isAdmin && <span className="text-[10px] bg-emerald-500 text-emerald-900 px-2 rounded-full font-bold">ADMIN</span>}</div></div>
             </div>
-            <button onClick={handleLogout} className="bg-slate-800 hover:bg-slate-700 px-3 py-2 rounded text-sm flex items-center"><LogOut className="w-4 h-4 mr-2" /> Sign Out</button>
+            <button onClick={handleLogout} className="bg-slate-800 px-3 py-2 rounded text-sm flex items-center"><LogOut className="w-4 h-4 mr-2" /> Sign Out</button>
           </div>
         </div>
 
-        {/* Navigation */}
         <div className="flex space-x-2 px-4 mb-6 overflow-x-auto">
           {['dashboard', 'events', 'gear', 'roster'].map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 min-w-[90px] py-3 rounded-lg font-bold capitalize ${activeTab === tab ? 'bg-white shadow-md text-emerald-600 border-t-4 border-emerald-500' : 'bg-slate-200 text-slate-500'}`}>
-              {tab}
-            </button>
+            <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 min-w-[90px] py-3 rounded-lg font-bold capitalize ${activeTab === tab ? 'bg-white shadow-md text-emerald-600 border-t-4 border-emerald-500' : 'bg-slate-200 text-slate-500'}`}>{tab}</button>
           ))}
         </div>
 
         <div className="px-4">
-          
-          {/* --- DASHBOARD --- */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -431,7 +396,7 @@ export default function PaintballFinanceTracker() {
                       {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                     <input type="number" placeholder="$" className="p-2 border rounded w-24" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} step="0.01" required />
-                    <button type="submit" className="bg-emerald-600 text-white px-4 rounded font-bold hover:bg-emerald-700">Save</button>
+                    <button type="submit" className="bg-emerald-600 text-white px-4 rounded font-bold">Save</button>
                   </form>
                 </div>
               )}
@@ -447,10 +412,7 @@ export default function PaintballFinanceTracker() {
                       const bal = share - (p.paid || 0);
                       return (
                         <tr key={p.id}>
-                          <td className="p-4 font-medium">
-                            {p.name}
-                            {p.is_admin && <Shield className="w-3 h-3 inline ml-1 text-emerald-500"/>}
-                          </td>
+                          <td className="p-4 font-medium">{p.name}{p.is_admin && <Shield className="w-3 h-3 inline ml-1 text-emerald-500"/>}</td>
                           <td className="p-4 text-right font-medium">${share.toFixed(2)}</td>
                           <td className="p-4 text-right text-emerald-600">${(p.paid||0).toFixed(2)}</td>
                           <td className="p-4 text-right"><span className={`px-2 py-1 rounded text-xs font-bold ${bal > 0.01 ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>{bal > 0.01 ? `Owes $${bal.toFixed(2)}` : 'Paid'}</span></td>
@@ -463,16 +425,13 @@ export default function PaintballFinanceTracker() {
             </div>
           )}
 
-          {/* --- EVENTS --- */}
           {activeTab === 'events' && (
             <div className="space-y-6">
               {isAdmin && (
                 <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
                   <h2 className="font-bold text-lg mb-4">Log Event</h2>
                   <div className="grid grid-cols-3 gap-3 mb-4">
-                    <select className="border p-2 rounded" value={newEvent.type} onChange={e=>setNewEvent({...newEvent, type: e.target.value})}>
-                      <option>Practice</option><option>Tournament</option><option>Social</option>
-                    </select>
+                    <select className="border p-2 rounded" value={newEvent.type} onChange={e=>setNewEvent({...newEvent, type: e.target.value})}><option>Practice</option><option>Tournament</option><option>Social</option></select>
                     <input type="date" className="border p-2 rounded" value={newEvent.date} onChange={e=>setNewEvent({...newEvent, date: e.target.value})} />
                     <input type="number" className="border p-2 rounded" placeholder="Total Cost" value={newEvent.cost} onChange={e=>setNewEvent({...newEvent, cost: e.target.value})} />
                   </div>
@@ -484,7 +443,7 @@ export default function PaintballFinanceTracker() {
                       ))}
                     </div>
                   </div>
-                  <button onClick={submitEvent} className="w-full bg-slate-800 text-white py-3 rounded font-bold hover:bg-slate-700">Save Event</button>
+                  <button onClick={submitEvent} className="w-full bg-slate-800 text-white py-3 rounded font-bold">Save & Notify</button>
                 </div>
               )}
               <div className="bg-white rounded-lg shadow divide-y">
@@ -494,12 +453,10 @@ export default function PaintballFinanceTracker() {
                      {isAdmin && <button onClick={()=>deleteEvent(e.id)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>}
                    </div>
                  ))}
-                 {events.length === 0 && <div className="p-6 text-center text-gray-400">No events logged.</div>}
               </div>
             </div>
           )}
 
-          {/* --- GEAR --- */}
           {activeTab === 'gear' && (
             <div className="space-y-6">
                {isAdmin && (
@@ -528,7 +485,7 @@ export default function PaintballFinanceTracker() {
                            {currentOrderItems.map(i => <div key={i.id} className="flex justify-between"><span>{i.description}</span> <span>${i.cost}</span></div>)}
                          </div>
                        )}
-                       <button onClick={submitFullOrder} className="w-full bg-emerald-600 text-white py-3 rounded font-bold hover:bg-emerald-700">Save Full Order</button>
+                       <button onClick={submitFullOrder} className="w-full bg-emerald-600 text-white py-3 rounded font-bold">Save & Notify</button>
                     </div>
                  </div>
                )}
@@ -548,52 +505,33 @@ export default function PaintballFinanceTracker() {
             </div>
           )}
 
-          {/* --- ROSTER (ADMIN MANAGES USERS) --- */}
           {activeTab === 'roster' && (
             <div className="space-y-6">
               {isAdmin && (
                 <div className="bg-white p-6 rounded shadow max-w-xl mx-auto border-l-4 border-purple-500">
                    <h2 className="font-bold mb-4 flex items-center"><UserPlus className="w-5 h-5 mr-2"/> Add Teammate</h2>
                    <form onSubmit={addToRoster} className="space-y-3">
-                     <div>
-                       <label className="block text-xs font-bold text-slate-500 uppercase">Player Name</label>
-                       <input className="w-full border p-2 rounded" placeholder="e.g. Viper" value={newPlayerName} onChange={e=>setNewPlayerName(e.target.value)}/>
-                     </div>
-                     <div>
-                       <label className="block text-xs font-bold text-slate-500 uppercase">Email (For Login)</label>
-                       <input type="email" className="w-full border p-2 rounded" placeholder="player@team.com" value={newPlayerEmail} onChange={e=>setNewPlayerEmail(e.target.value)}/>
-                     </div>
+                     <div><label className="block text-xs font-bold text-slate-500 uppercase">Player Name</label><input className="w-full border p-2 rounded" value={newPlayerName} onChange={e=>setNewPlayerName(e.target.value)}/></div>
+                     <div><label className="block text-xs font-bold text-slate-500 uppercase">Email</label><input type="email" className="w-full border p-2 rounded" value={newPlayerEmail} onChange={e=>setNewPlayerEmail(e.target.value)}/></div>
                      <div className="flex items-center gap-2 bg-slate-50 p-2 rounded border">
                        <input type="checkbox" id="isAdmin" checked={makeAdmin} onChange={e => setMakeAdmin(e.target.checked)} />
                        <label htmlFor="isAdmin" className="text-sm font-bold text-slate-700">Grant Admin Access?</label>
                      </div>
-                     <button type="submit" className="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded font-bold">Add & Invite</button>
+                     <button type="submit" className="w-full bg-purple-600 text-white py-2 rounded font-bold">Add & Invite</button>
                    </form>
                 </div>
               )}
-
                <div className="bg-white rounded shadow max-w-xl mx-auto overflow-hidden">
                  <div className="bg-slate-100 p-4 font-bold text-slate-600">Current Team</div>
                  <div className="divide-y">
                    {players.map(p => (
                      <div key={p.id} className="flex justify-between items-center p-4 hover:bg-slate-50">
                        <div>
-                         <div className="font-bold text-slate-800 flex items-center">
-                           {p.name}
-                           {p.is_admin && <Shield className="w-3 h-3 ml-2 text-emerald-500" />}
-                         </div>
+                         <div className="font-bold text-slate-800 flex items-center">{p.name}{p.is_admin && <Shield className="w-3 h-3 ml-2 text-emerald-500" />}</div>
                          <div className="text-xs text-slate-400">{p.email || "No email linked"}</div>
                        </div>
                        <div className="flex items-center gap-3">
-                         {isAdmin && p.email && (
-                           <a 
-                             href={`mailto:${p.email}?subject=Join Paintball Finance Tracker&body=Hey ${p.name}, sign up here: ${window.location.href}`}
-                             className="text-blue-400 hover:text-blue-600"
-                             title="Send Email Invite"
-                           >
-                             <Mail className="w-4 h-4" />
-                           </a>
-                         )}
+                         {isAdmin && p.email && <a href={`mailto:${p.email}?subject=Join Paintball Finance Tracker&body=Hey ${p.name}, sign up here: ${window.location.href}`} className="text-blue-400 hover:text-blue-600"><Mail className="w-4 h-4" /></a>}
                          {isAdmin && <button onClick={()=>deletePlayer(p.id)} className="text-red-300 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>}
                        </div>
                      </div>
